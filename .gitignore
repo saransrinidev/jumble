@@ -1,0 +1,14 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.env
+.env.local
+.env*.local
+atlas-credentials.env
+backend/.env
+test-artifacts/
+__pycache__/
+.test-deps/
+.pytest_cache/
+.pytest-bank-*/
+docs/question-bank-source/
