@@ -19,7 +19,8 @@ const out = []
 const log = (s) => { out.push(s); console.log(s) }
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-const server = spawn(process.execPath, [path.join(root, 'node_modules/next/dist/bin/next'), 'dev', '-p', String(PORT)], { cwd: root, env: { ...process.env, NEXT_DIST_DIR: '.next-e2e' } })
+const server = spawn(process.execPath, [path.join(root, 'node_modules/next/dist/bin/next'), 'dev', '-p', String(PORT)], { // Uses the test database (seeded by `npm run smoke`), never the live game.
+cwd: root, env: { ...process.env, NEXT_DIST_DIR: '.next-e2e', MONGODB_DB: `${env.MONGODB_DB || 'jumble'}_smoke` } })
 const serverLog = []
 server.stdout.on('data', (d) => serverLog.push(String(d)))
 server.stderr.on('data', (d) => serverLog.push(String(d)))

@@ -70,4 +70,6 @@ export const COLLECTIONS = {
   game: 'game',
   rounds: 'rounds',
   answers: 'answers',
+  drawings: 'drawings',
+  chat: 'chat',
 } as const

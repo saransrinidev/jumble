@@ -6,6 +6,27 @@ import { ArrowRight, Crown, Home, Medal, RotateCcw, Sparkles, Trophy } from 'luc
 import { useGame } from '../contexts/GameContext'
 import { Button, ErrorNotice, Page, TeamIcon, teamClass } from '../components/common/UI'
 import { TeamLeaderboard } from '../components/game/TeamLeaderboard'
+import { TeamBadge } from '../components/common/UI'
+import type { GameState } from '../types/game'
+
+const MEDAL = ['🥇', '🥈', '🥉']
+/** Every player ranked by their own points (equal scores share a place). */
+function PlayerLeaderboard({ state }: { state: GameState }) {
+  const rows = state.leaderboard ?? []
+  if (!rows.length) return null
+  return <section className="player-leaderboard" aria-label="Individual points">
+    <h3>Individual points</h3>
+    <ol>{rows.map(p => {
+      const team = state.teams.find(t => t.id === p.teamId)
+      return <li key={p.id} className={`${p.rank <= 3 ? 'top' : ''} ${p.isYou ? 'you' : ''}`}>
+        <span className="pl-rank">{MEDAL[p.rank - 1] ?? `#${p.rank}`}</span>
+        <span className="pl-name">{p.isYou ? `${p.name} (you)` : p.name}</span>
+        {team && <TeamBadge name={team.name}/>}
+        <span className="pl-score">{p.score.toLocaleString()}</span>
+      </li>
+    })}</ol>
+  </section>
+}
 export default function PlayerResultsPage({ host = false }: { host?: boolean }) {
   const { state, clockOffset, hostAction } = useGame(); const reduce = useReducedMotion(); const initial = useRef(Date.now()); const [now, setNow] = useState(Date.now()); const [busy, setBusy] = useState(false); const [error, setError] = useState('')
   useEffect(() => { const interval = setInterval(() => setNow(Date.now()), 150); return () => clearInterval(interval) }, [])
@@ -19,11 +40,11 @@ export default function PlayerResultsPage({ host = false }: { host?: boolean }) 
   const replay = async () => { setBusy(true); setError(''); try { await hostAction('replay') } catch (e) { setError(e instanceof Error ? e.message : 'Unable to replay.') } finally { setBusy(false) } }
   return <Page className={`results-page scene-${scene}`}><AnimatePresence mode="wait"><motion.div key={['third', 'second', 'suspense', 'winner'].includes(scene) ? 'podium' : scene} initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 1.03 }} transition={{ duration: 0.3 }}>
     {scene === 'calculating' && <div className="center-scene"><span className="loading-ring"/><h1>Final Results</h1><p>Calculating the winner…</p></div>}
-    {['mystery', 'third', 'second', 'suspense', 'winner'].includes(scene) && <><span className="eyebrow">SIX ROUNDS. EVERYONE ALL IN.</span><h1>{scene === 'suspense' ? 'And the winners are…' : scene === 'winner' ? 'There’s your champion.' : 'The final reveal.'}</h1><div className="podium">{[1, 0, 2].map(rank => {
+    {['mystery', 'third', 'second', 'suspense', 'winner'].includes(scene) && <><span className="eyebrow">EVERY ROUND. EVERYONE ALL IN.</span><h1>{scene === 'suspense' ? 'And the winners are…' : scene === 'winner' ? 'There’s your champion.' : 'The final reveal.'}</h1><div className="podium">{[1, 0, 2].map(rank => {
       const team = sorted[rank]; const visible = rank === 2 ? elapsed >= 2.5 : rank === 1 ? elapsed >= 4 : elapsed >= 6.5
       return <motion.div layout key={team.id} className={`podium-card position-${rank} ${visible ? teamClass(team.name) : 'mystery-card'}`} animate={{ y: visible ? 0 : 15, scale: rank === 0 && visible ? 1.05 : 1 }}><span className="podium-medal">{visible ? rank === 0 ? <Crown size={43}/> : <Medal size={34}/> : '?'}</span>{visible ? <><TeamIcon name={team.name} size={48}/><span className="eyebrow">{rank + 1}{rank === 0 ? 'ST' : rank === 1 ? 'ND' : 'RD'} PLACE</span><h2>{team.name}</h2><strong>{team.score.toLocaleString()}</strong><small>points</small></> : <><span className="mystery-question">?</span><p>A little suspense…</p></>}</motion.div>
     })}</div></>}
-    {['champion', 'celebrate', 'trophy', 'closing'].includes(scene) && <div className={`champion-scene ${teamClass(winner.name)}`}><span className="champion-crown"><Crown size={50}/></span><span className="eyebrow">{scene === 'trophy' ? 'A MOMENT FOR THE TROPHY' : 'SIX ROUNDS. ONE INCREDIBLE TEAM.'}</span><h2>{winner.name}</h2><h1>Champions<span>!</span></h1><div className="trophy-stage"><span className="trophy-ray"/><motion.div animate={reduce ? {} : { y: [0, -12, 0], rotate: [0, -3, 3, 0] }} transition={{ duration: 3, repeat: Infinity }}><Trophy size={scene === 'trophy' ? 160 : 125} strokeWidth={1.3}/></motion.div><Sparkles className="trophy-spark" size={30}/>{(scene === 'celebrate' || scene === 'trophy') && <div className="celebration-characters" aria-hidden="true">{[0, 1, 2].map(i => <span className={`character character-${i}`} key={i}><i className="character-head"/><i className="character-body"/><i className="character-arm"/></span>)}</div>}</div><strong className="winner-points">{winner.score.toLocaleString()} <span>points of pure team spirit.</span></strong><p>Think. Laugh. Win. Together.</p>{scene === 'closing' && <><TeamLeaderboard teams={sorted} compact/>{!host && state.player && <div className="your-contribution">You contributed <strong>{state.player.score.toLocaleString()} points.</strong> Nice teamwork, {state.player.name}.</div>}<div className="results-actions">{host ? <><Button busy={busy} onClick={replay}><RotateCcw size={18}/>Play Again</Button><Link to="/control" className="button secondary">New Game<ArrowRight size={18}/></Link></> : <Link to="/play" className="button secondary"><RotateCcw size={18}/>Play Again</Link>}<Link to="/" className="button quiet"><Home size={18}/>Back to Home</Link></div>{error && <ErrorNotice message={error}/>}</>}</div>}
-    {scene === 'standings' && <div className="final-standings"><span className="eyebrow">THE FINAL STANDINGS</span><h1>What a game.</h1><p>Three teams. Fifty players. One shared memory.</p><TeamLeaderboard teams={sorted}/></div>}
+    {['champion', 'celebrate', 'trophy', 'closing'].includes(scene) && <div className={`champion-scene ${teamClass(winner.name)}`}><span className="champion-crown"><Crown size={50}/></span><span className="eyebrow">{scene === 'trophy' ? 'A MOMENT FOR THE TROPHY' : 'EVERY ROUND. ONE INCREDIBLE TEAM.'}</span><h2>{winner.name}</h2><h1>Champions<span>!</span></h1><div className="trophy-stage"><span className="trophy-ray"/><motion.div animate={reduce ? {} : { y: [0, -12, 0], rotate: [0, -3, 3, 0] }} transition={{ duration: 3, repeat: Infinity }}><Trophy size={scene === 'trophy' ? 160 : 125} strokeWidth={1.3}/></motion.div><Sparkles className="trophy-spark" size={30}/>{(scene === 'celebrate' || scene === 'trophy') && <div className="celebration-characters" aria-hidden="true">{[0, 1, 2].map(i => <span className={`character character-${i}`} key={i}><i className="character-head"/><i className="character-body"/><i className="character-arm"/></span>)}</div>}</div><strong className="winner-points">{winner.score.toLocaleString()} <span>points of pure team spirit.</span></strong><p>Think. Laugh. Win. Together.</p>{scene === 'closing' && <><TeamLeaderboard teams={sorted} compact/><PlayerLeaderboard state={state}/>{!host && state.player && <div className="your-contribution">You contributed <strong>{state.player.score.toLocaleString()} points.</strong> Nice teamwork, {state.player.name}.</div>}<div className="results-actions">{host ? <><Button busy={busy} onClick={replay}><RotateCcw size={18}/>Play Again</Button><Link to="/control" className="button secondary">New Game<ArrowRight size={18}/></Link></> : <Link to="/play" className="button secondary"><RotateCcw size={18}/>Play Again</Link>}<Link to="/" className="button quiet"><Home size={18}/>Back to Home</Link></div>{error && <ErrorNotice message={error}/>}</>}</div>}
+    {scene === 'standings' && <div className="final-standings"><span className="eyebrow">THE FINAL STANDINGS</span><h1>What a game.</h1><p>Three teams. One shared memory.</p><TeamLeaderboard teams={sorted}/><PlayerLeaderboard state={state}/></div>}
   </motion.div></AnimatePresence></Page>
 }

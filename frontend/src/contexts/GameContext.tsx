@@ -12,7 +12,8 @@ import { subscribeToGame } from '../services/realtimeService'
 import { subscribeLive } from '../services/liveService'
 import { DEMO, STATIC } from '../services/api'
 import type { Connection } from '../services/realtimeService'
-interface Context { state: GameState; loading: boolean; error: string; connection: Connection; clockOffset: number; refresh: () => Promise<void>; join: (name: string, code?: string) => Promise<JoinResponse>; submit: (answer: string) => Promise<void>; hostAction: (action: HostAction) => Promise<void>; clearError: () => void }
+interface Context { state: GameState; loading: boolean; error: string; connection: Connection; clockOffset: number; refresh: () => Promise<void>; join: (name: string, code?: string) => Promise<JoinResponse>; submit: (answer: string) => Promise<SubmitResult | undefined>; hostAction: (action: HostAction) => Promise<void>; clearError: () => void }
+export interface SubmitResult { answerLocked: boolean; correct?: boolean; rank?: number; points?: number }
 export type HostAction = 'create' | 'start' | 'round' | 'question' | 'end' | 'answer' | 'scores' | 'next' | 'complete' | 'finish' | 'replay'
 const GameContext = createContext<Context | null>(null)
 const sessionKey = 'jumble.player'
@@ -126,6 +127,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
       const result = await playerService.submitAnswer(s.question.id, answer, s.player.id, s.id, crypto.randomUUID())
       setState(old => ({ ...old, player: old.player ? { ...old.player, hasSubmitted: result.answerLocked, answer } : undefined }))
       await refresh(true)
+      return result
     } catch (e) {
       if (e instanceof ApiError && e.code === 'ANSWER_ALREADY_SUBMITTED') { setState(old => ({ ...old, player: old.player ? { ...old.player, hasSubmitted: true } : undefined })); await refresh(true) }
       else throw e

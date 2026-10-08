@@ -39,7 +39,7 @@
 .home-showdown::after { content: ''; position: absolute; right: 10px; bottom: -11px; width: 16px; height: 24px; background: #6130ff; border-radius: 0 0 3px 12px; transform: rotate(-20deg); }
 .home-showdown > span { position: absolute; right: -36px; bottom: 16px; width: 21px; height: 9px; border-radius: 10px; background: linear-gradient(90deg, #972bfa, #bb69ff); transform: rotate(10deg); }
 .home-showdown > span::before { content: ''; position: absolute; width: 21px; height: 9px; background: inherit; border-radius: inherit; top: -18px; right: 5px; transform: rotate(-52deg); }
-.home-round-grid { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: clamp(9px, .65vw, 15px); margin: 0; padding: 0; list-style: none; }
+.home-round-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: clamp(9px, .65vw, 15px); margin: 0; padding: 0; list-style: none; }
 .home-round { position: relative; isolation: isolate; display: flex; flex-direction: column; min-width: 0; min-height: clamp(320px, 38dvh, 410px); border-radius: 23px; background: var(--round-background); box-shadow: 0 15px 20px var(--round-shadow), inset 0 1px 1px #ffffff80; color: #fff; }
 .home-round::before { content: ''; position: absolute; z-index: -1; inset: 0; border-radius: inherit; background: radial-gradient(ellipse at 0 20%, #ffffff28, transparent 60%), linear-gradient(135deg, transparent 30%, #ffffff0b 30%, #ffffff0b 47%, transparent 47%); }
 .home-round-memory { --round-background: linear-gradient(155deg, #ff507f, #ed244a 55%, #bd1936); --round-shadow: #a51b392a; }
@@ -80,7 +80,7 @@
   .home-mascot { grid-column: 2; grid-row: 2; height: auto; width: 100%; max-height: 350px; margin: 20px 0 0; }
   .home-rounds { margin-top: 25px; }
   .home-showdown { right: 7%; bottom: calc(100% + 44px); padding: 14px 18px; }
-  .home-round-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 68px 20px; }
+  .home-round-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 68px 20px; }
   .home-round { min-height: 340px; }
   .home-round-art { height: clamp(175px, 24vw, 235px); margin-top: -45px; }
   .home-round-content { padding: 0 20px 18px; }

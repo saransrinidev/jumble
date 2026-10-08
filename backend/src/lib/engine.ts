@@ -9,8 +9,8 @@
 import { randomUUID } from 'node:crypto'
 import { COLLECTIONS, collection } from './mongo'
 import { AppError } from './envelope'
-import { defaultRounds, matchMemoryWords } from './content'
-import type { AnswerDoc, GameDoc, PlayerDoc, QuestionDoc, RoundDoc, TeamDoc } from './types'
+import { CONTENT_VERSION, DRAW, defaultRounds, emojiHint, lettersOnly, matchMemoryWords } from './content'
+import type { AnswerDoc, ChatDoc, DrawingDoc, GameDoc, PlayerDoc, QuestionDoc, RoundDoc, Stroke, TeamDoc } from './types'
 
 export const TEAM_DEFS: TeamDoc[] = [
   { _id: 'ctrl-alt-defeat', name: 'Ctrl Alt Defeat', order: 0 },
@@ -33,6 +33,17 @@ async function gameCol() {
 async function answersCol() {
   return collection<AnswerDoc>(COLLECTIONS.answers)
 }
+async function drawingsCol() {
+  return collection<DrawingDoc>(COLLECTIONS.drawings)
+}
+async function chatCol() {
+  return collection<ChatDoc>(COLLECTIONS.chat)
+}
+
+/** Questions where the first N correct players win points (live race). */
+function isRace(question: QuestionDoc): boolean {
+  return question.kind === 'emoji' || question.kind === 'drawing' || question.kind === 'mcq'
+}
 
 export function teamDisplayName(teamId: string): string {
   return TEAM_DEFS.find((t) => t._id === teamId)?.name ?? teamId
@@ -54,9 +65,14 @@ function isCurrentShape(game: GameDoc): boolean {
 
 export async function getGame(): Promise<GameDoc | null> {
   const game = await (await gameCol()).findOne({ _id: 'current' })
-  // A game saved by an older version (rounds without questions) is replaced
-  // with a fresh lobby so the new round/question flow always has valid data.
-  if (game && !isCurrentShape(game)) return createGame()
+  if (!game) return null
+  // Saved by an older version: replace with a fresh lobby so the round/question
+  // flow always has valid data. New built-in content refreshes a waiting lobby.
+  if (!isCurrentShape(game)) return createGame()
+  if (game.status === 'lobby' && game.contentVersion !== CONTENT_VERSION) {
+    await (await gameCol()).updateOne({ _id: 'current' }, { $set: { rounds: defaultRounds(), contentVersion: CONTENT_VERSION } })
+    return { ...game, rounds: defaultRounds(), contentVersion: CONTENT_VERSION }
+  }
   return game
 }
 
@@ -90,9 +106,15 @@ export async function createGame(): Promise<GameDoc> {
     questionIndex: 0,
     rounds: defaultRounds(),
     scoredQuestions: [],
+    solvers: {},
+    contentVersion: CONTENT_VERSION,
+    artists: {},
+    artistHistory: {},
   }
   await (await gameCol()).replaceOne({ _id: 'current' }, game, { upsert: true })
   await (await answersCol()).deleteMany({})
+  await (await drawingsCol()).deleteMany({})
+  await (await chatCol()).deleteMany({})
   // Players still on the page re-mark themselves as joined on their next poll.
   await (await playersCol()).updateMany({}, { $set: { score: 0, joined: false } })
   return game
@@ -186,10 +208,91 @@ export async function startQuestion(): Promise<void> {
   const show = question.kind === 'memory' ? (question.showSeconds ?? 5) * 1000 : 0
   const answerStartsAt = new Date(now + show)
   const deadline = new Date(answerStartsAt.getTime() + (question.answerSeconds ?? 30) * 1000)
-  await (await gameCol()).updateOne(
-    { _id: 'current' },
-    { $set: { phase: 'active', questionStartedAt: new Date(now), answerStartsAt, questionDeadline: deadline } },
+  const set: Record<string, unknown> = { phase: 'active', questionStartedAt: new Date(now), answerStartsAt, questionDeadline: deadline }
+  if (question.kind === 'drawing') {
+    const { artists, history } = await pickArtists(game)
+    set[`artists.${question._id}`] = artists
+    set.artistHistory = history
+  }
+  await (await gameCol()).updateOne({ _id: 'current' }, { $set: set })
+}
+
+/**
+ * Draw & Guess: pick one artist per team from the players who are in the game,
+ * rotating so nobody draws twice until everyone on their team has drawn.
+ */
+async function pickArtists(game: GameDoc): Promise<{ artists: Record<string, string>; history: Record<string, string[]> }> {
+  const joined = await (await playersCol()).find({ joined: true }).toArray()
+  const artists: Record<string, string> = {}
+  const history: Record<string, string[]> = { ...(game.artistHistory ?? {}) }
+  for (const team of TEAM_DEFS) {
+    const members = joined.filter((p) => p.teamId === team._id).map((p) => p._id)
+    if (!members.length) continue
+    let drawn = (history[team._id] ?? []).filter((id) => members.includes(id))
+    let pool = members.filter((id) => !drawn.includes(id))
+    if (!pool.length) { drawn = []; pool = members } // everyone has drawn: start a new rotation
+    const pick = pool[Math.floor(Math.random() * pool.length)]
+    artists[team._id] = pick
+    history[team._id] = [...drawn, pick]
+  }
+  return { artists, history }
+}
+
+function artistOf(game: GameDoc, questionId: string, teamId: string): string | undefined {
+  return game.artists?.[questionId]?.[teamId]
+}
+
+/** Draw & Guess: the team's artist adds a stroke to their team's canvas. */
+export async function submitStroke(playerId: string, questionId: string, stroke: Stroke): Promise<{ ok: true }> {
+  const id = playerId.trim().toUpperCase()
+  const player = await (await playersCol()).findOne({ _id: id })
+  if (!player) throw new AppError('UNAUTHORIZED', 'Unknown player.', 403)
+  const game = await requireGame()
+  const { question } = current(game)
+  if (question._id !== questionId || question.kind !== 'drawing' || game.phase !== 'active') {
+    throw new AppError('QUESTION_NOT_ACTIVE', 'Drawing is closed.', 409)
+  }
+  if (game.questionDeadline && Date.now() > new Date(game.questionDeadline).getTime()) {
+    throw new AppError('QUESTION_NOT_ACTIVE', 'Time is up.', 409)
+  }
+  if (artistOf(game, questionId, player.teamId) !== id) throw new AppError('UNAUTHORIZED', 'Only your team’s artist can draw.', 403)
+
+  // Validate + shrink the payload (3 decimals is plenty for an 800px canvas).
+  if (!stroke || typeof stroke.id !== 'string' || !/^#[0-9a-fA-F]{6}$/.test(stroke.color ?? '') || !Array.isArray(stroke.points) || !stroke.points.length) {
+    throw new AppError('CONTENT_INVALID', 'Invalid stroke.')
+  }
+  const clean: Stroke = {
+    id: stroke.id.slice(0, 80),
+    color: stroke.color,
+    width: Math.min(24, Math.max(1, Math.round(Number(stroke.width) || 4))),
+    points: stroke.points.slice(0, 500).map(([x, y]) => [
+      Math.round(Math.min(1, Math.max(0, Number(x) || 0)) * 1000) / 1000,
+      Math.round(Math.min(1, Math.max(0, Number(y) || 0)) * 1000) / 1000,
+    ]),
+  }
+  const _id = `${questionId}:${player.teamId}`
+  const drawings = await drawingsCol()
+  const existing = (await drawings.findOne({ _id }, { projection: { 'strokes.id': 1 } }))?.strokes ?? []
+  if (existing.some((s) => s.id === clean.id)) return { ok: true } // retry of the same stroke
+  if (existing.length >= DRAW.maxStrokes) throw new AppError('DRAWING_LIMIT', 'The canvas is full — clear it to keep drawing.')
+  await drawings.updateOne(
+    { _id },
+    { $push: { strokes: clean }, $setOnInsert: { questionId, teamId: player.teamId } },
+    { upsert: true },
   )
+  return { ok: true }
+}
+
+/** Draw & Guess: the artist clears their team's canvas. */
+export async function clearCanvas(playerId: string, questionId: string): Promise<{ ok: true }> {
+  const id = playerId.trim().toUpperCase()
+  const player = await (await playersCol()).findOne({ _id: id })
+  if (!player) throw new AppError('UNAUTHORIZED', 'Unknown player.', 403)
+  const game = await requireGame()
+  if (current(game).question._id !== questionId || game.phase !== 'active') throw new AppError('QUESTION_NOT_ACTIVE', 'Drawing is closed.', 409)
+  if (artistOf(game, questionId, player.teamId) !== id) throw new AppError('UNAUTHORIZED', 'Only your team’s artist can draw.', 403)
+  await (await drawingsCol()).updateOne({ _id: `${questionId}:${player.teamId}` }, { $set: { strokes: [] } })
+  return { ok: true }
 }
 
 /** Close the current question: auto-score (once) and show the scorecard. */
@@ -275,6 +378,8 @@ async function autoScoreQuestion(question: QuestionDoc, game: GameDoc): Promise<
       const matched = matchMemoryWords(ans.text, question.words ?? []).length
       await applyResult(ans, matched > 0, matched * question.points, { matchedCount: matched })
     }
+  } else if (isRace(question)) {
+    // Already scored live, the moment each player answered correctly.
   } else {
     const accepted = (question.acceptedAnswers ?? []).map(normalize).filter(Boolean)
     if (accepted.length) {
@@ -293,8 +398,8 @@ export async function reviewAnswer(answerId: string, correct: boolean): Promise<
   if (!ans) throw new AppError('SUBMISSION_NOT_FOUND', 'Answer not found.', 404)
   const game = await requireGame()
   const question = findQuestion(game, ans.questionId)?.question
-  if (question?.kind === 'memory') {
-    throw new AppError('INVALID_ACTION', 'Memory Grid answers are scored automatically. Use Award points to adjust.')
+  if (question && (question.kind === 'memory' || isRace(question))) {
+    throw new AppError('INVALID_ACTION', 'This round is scored automatically. Use Award points to adjust.')
   }
   const points = question?.points ?? 20
   await applyResult(ans, correct, correct ? points : 0)
@@ -321,7 +426,7 @@ export async function submitAnswer(
   questionId: string,
   text: string,
   _requestId: string,
-): Promise<{ answerLocked: boolean }> {
+): Promise<SubmitResult> {
   const id = playerId.trim().toUpperCase()
   const player = await (await playersCol()).findOne({ _id: id })
   if (!player) throw new AppError('UNAUTHORIZED', 'Unknown player.', 403)
@@ -338,6 +443,10 @@ export async function submitAnswer(
     throw new AppError('QUESTION_NOT_ACTIVE', 'Time is up for this question.', 409)
   }
   const clean = text.slice(0, 4000)
+  if (question.kind === 'drawing' && artistOf(game, question._id, player.teamId) === id) {
+    throw new AppError('ARTIST_CANNOT_GUESS', 'You’re the artist this time — draw, don’t guess!', 403)
+  }
+  if (isRace(question)) return submitRace(player, round._id, question, clean)
   const matchedCount = question.kind === 'memory' ? matchMemoryWords(clean, question.words ?? []).length : undefined
   // One answer per player per question (a resubmission replaces it before close).
   const col = await answersCol()
@@ -359,6 +468,89 @@ export async function submitAnswer(
     })
   }
   return { answerLocked: false }
+}
+
+export interface SubmitResult {
+  answerLocked: boolean
+  correct?: boolean
+  rank?: number
+  points?: number
+}
+
+/**
+ * Emoji Decode guess. Wrong guesses can be retried. A correct guess claims the
+ * next finishing place atomically (so two simultaneous answers can't both be
+ * 1st); places 1–3 score rankPoints, later correct answers score 0. When all
+ * places are taken the question closes automatically.
+ */
+async function submitRace(player: PlayerDoc, roundId: string, question: QuestionDoc, text: string): Promise<SubmitResult> {
+  const playerId = player._id
+  const teamId = player.teamId
+  const answers = await answersCol()
+  const existing = await answers.findOne({ questionId: question._id, playerId })
+  if (existing?.correct) return { answerLocked: true, correct: true, rank: existing.rank, points: existing.awardedPoints }
+  if (question.kind === 'mcq') {
+    // One attempt only — otherwise players could just click through every option.
+    if (existing) throw new AppError('ANSWER_ALREADY_SUBMITTED', 'You already answered this question.', 409)
+    if (!(question.options ?? []).includes(text)) throw new AppError('CONTENT_INVALID', 'Pick one of the options.')
+  }
+  if (existing && Date.now() - new Date(existing.submittedAt).getTime() < 700) {
+    throw new AppError('RATE_LIMITED', 'Slow down a little — try again in a moment.', 429)
+  }
+
+  const correct =
+    question.kind === 'mcq'
+      ? text === question.acceptedAnswers[0]
+      : lettersOnly(text) !== '' && lettersOnly(text) === lettersOnly(question.acceptedAnswers[0] ?? '')
+  // One answer doc per player per question, updated on every guess.
+  await answers.updateOne(
+    { questionId: question._id, playerId },
+    {
+      $set: { text, submittedAt: new Date(), teamId, roundId },
+      $inc: { attempts: 1 },
+      $setOnInsert: { _id: randomUUID(), correct: false, awardedPoints: 0 },
+    },
+    { upsert: true },
+  )
+  if (!correct) {
+    if (question.kind === 'drawing') await postChat(question._id, player, text.slice(0, 60), false)
+    // MCQ: the wrong answer is final. Correctness isn't revealed until the question closes.
+    return question.kind === 'mcq' ? { answerLocked: true } : { answerLocked: false, correct: false }
+  }
+
+  const places = question.rankPoints ?? [5, 3, 1]
+  const key = `solvers.${question._id}`
+  const claimed = await (await gameCol()).findOneAndUpdate(
+    { _id: 'current', phase: 'active', [`${key}.${places.length - 1}`]: { $exists: false }, [key]: { $ne: playerId } },
+    { $push: { [key]: playerId } },
+    { returnDocument: 'after', projection: { solvers: 1 } },
+  )
+  const order = claimed?.solvers?.[question._id] ?? []
+  const rank = claimed ? order.indexOf(playerId) + 1 : undefined
+  const points = rank ? places[rank - 1] ?? 0 : 0
+
+  const doc = (await answers.findOne({ questionId: question._id, playerId }))!
+  await applyResult(doc, true, points, { rank })
+  // The word itself never goes into the chat — just that they got it.
+  if (question.kind === 'drawing') await postChat(question._id, player, '', true, rank)
+
+  // All finishing places taken: close the question for everyone.
+  if (claimed && order.length >= places.length) await revealScores().catch(() => {})
+  return { answerLocked: true, correct: true, rank, points }
+}
+
+async function postChat(questionId: string, player: PlayerDoc, text: string, correct: boolean, rank?: number): Promise<void> {
+  await (await chatCol()).insertOne({
+    _id: randomUUID(),
+    questionId,
+    teamId: player.teamId,
+    playerId: player._id,
+    name: player.name,
+    text,
+    correct,
+    rank,
+    at: new Date(),
+  })
 }
 
 /** Lazily auto-close the active question once its deadline (plus grace) has passed. */
@@ -418,6 +610,60 @@ function questionView(game: GameDoc, round: RoundDoc, question: QuestionDoc, hos
       startedAt: iso(prep ? game.questionStartedAt : game.answerStartsAt),
       correctAnswer: revealed ? words.join(' · ') : undefined,
       hostAnswer: revealed && host ? words.join(' · ') : undefined,
+    }
+  }
+
+  if (question.kind === 'mcq') {
+    const options = question.options ?? []
+    const answer = question.acceptedAnswers[0] ?? ''
+    const letter = 'ABCDEFGH'[options.indexOf(answer)] ?? ''
+    const shown = active || revealed // nothing to read ahead on the intro screen
+    return {
+      ...base,
+      question: shown ? question.prompt : 'Get ready…',
+      questionType: 'mcq',
+      gameType: 'technical',
+      questionData: shown && question.code ? { code: question.code } : {},
+      options: shown ? options : [],
+      durationSeconds: question.answerSeconds,
+      startedAt: iso(game.answerStartsAt ?? game.questionStartedAt),
+      correctAnswer: revealed ? `${letter}. ${answer}` : undefined,
+      hostAnswer: revealed && host ? `${letter}. ${answer}` : undefined,
+    }
+  }
+
+  if (question.kind === 'drawing') {
+    // Canvas / artist details are filled in by snapshot(), which knows the viewer.
+    return {
+      ...base,
+      question: active ? 'Draw & Guess' : revealed ? 'The word was…' : 'Draw & Guess',
+      questionType: 'chat',
+      gameType: 'drawing',
+      questionData: {},
+      durationSeconds: question.answerSeconds,
+      startedAt: iso(game.answerStartsAt ?? game.questionStartedAt),
+      correctAnswer: revealed ? question.acceptedAnswers[0] : undefined,
+      hostAnswer: revealed && host ? question.acceptedAnswers[0] : undefined,
+    }
+  }
+
+  if (question.kind === 'emoji') {
+    const answer = question.acceptedAnswers[0] ?? ''
+    const start = answerAt || now
+    const total = (question.answerSeconds ?? 20) * 1000
+    const progress = revealed ? 1 : active ? Math.min(1, (now - start) / total) : 0
+    return {
+      ...base,
+      question: question.prompt,
+      questionType: 'fill',
+      gameType: 'emoji',
+      // The image only appears once the question starts — no peeking from the intro.
+      questionData: active || revealed ? { image: question.image, pattern: emojiHint(answer, progress) } : {},
+      durationSeconds: question.answerSeconds,
+      startedAt: iso(game.answerStartsAt ?? game.questionStartedAt),
+      correctAnswer: revealed ? answer : undefined,
+      // The host screen is often projected, so it gets the answer only at the reveal.
+      hostAnswer: revealed && host ? answer : undefined,
     }
   }
 
@@ -488,6 +734,57 @@ export async function snapshot(opts: { host: boolean; playerId?: string | null }
 
   if (game.status !== 'lobby') result.question = questionView(game, round, question, opts.host)
 
+  // Final results: every player ranked by points (equal scores share a rank).
+  if (game.status === 'completed') {
+    const ranked = players.filter((p) => p.joined || p.score).sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+    let rank = 0
+    let last: number | undefined
+    result.leaderboard = ranked.map((p, i) => {
+      if (p.score !== last) { rank = i + 1; last = p.score }
+      return { rank, id: p._id, name: p.name, teamId: p.teamId, score: p.score, isYou: p._id === viewerId }
+    })
+  }
+
+  // Race rounds: everyone sees who has already solved it, in finishing order.
+  if (isRace(question) && game.status !== 'lobby') {
+    const places = question.rankPoints ?? [5, 3, 1]
+    result.solvers = (game.solvers?.[question._id] ?? []).map((pid, i) => {
+      const p = players.find((x) => x._id === pid)
+      return { rank: i + 1, points: places[i] ?? 0, name: p?.name ?? pid, teamId: p?.teamId ?? '', isYou: pid === viewerId }
+    })
+    result.placesTotal = places.length
+    result.placePoints = places
+  }
+
+  // Draw & Guess: artists, canvases and the team chat.
+  if (question.kind === 'drawing' && game.status !== 'lobby') {
+    const q = result.question as Record<string, unknown>
+    const live = game.phase === 'active'
+    const shown = live || ['score_revealed', 'completed'].includes(game.phase)
+    const word = question.acceptedAnswers[0] ?? ''
+    const artists = game.artists?.[question._id] ?? {}
+    const artistNames = Object.fromEntries(Object.entries(artists).map(([t, pid]) => [t, players.find((p) => p._id === pid)?.name ?? pid]))
+    const canvases: Record<string, Stroke[]> = shown
+      ? Object.fromEntries((await (await drawingsCol()).find({ questionId: question._id }).toArray()).map((d) => [d.teamId, d.strokes]))
+      : {}
+    if (opts.host) {
+      q.questionData = { canvases, artists, artistNames, letters: word.length }
+    } else if (viewer) {
+      const isArtist = artists[viewer.teamId] === viewer._id
+      q.questionData = {
+        isArtist,
+        // Only the artist ever gets the word while the question is live.
+        secretCard: isArtist && live ? word : undefined,
+        strokes: canvases[viewer.teamId] ?? [],
+        artistId: artists[viewer.teamId],
+        artistName: artistNames[viewer.teamId],
+        letters: word.length,
+      }
+      const lines = await (await chatCol()).find({ questionId: question._id, teamId: viewer.teamId }).sort({ at: -1 }).limit(40).toArray()
+      result.chat = lines.reverse().map((c) => ({ id: c._id, name: c.name, text: c.text, correct: c.correct, rank: c.rank, isYou: c.playerId === viewer._id }))
+    }
+  }
+
   if (opts.host) {
     const startAt = game.answerStartsAt ?? game.questionStartedAt
     result.reviewSubmissions = qAnswers.map((a) => ({
@@ -498,6 +795,8 @@ export async function snapshot(opts: { host: boolean; playerId?: string | null }
       answer: a.text,
       kind: question.kind,
       matchedCount: a.matchedCount,
+      rank: a.rank,
+      attempts: a.attempts,
       correct: a.correct,
       awardedPoints: a.awardedPoints,
       elapsed: startAt ? Math.max(0, (new Date(a.submittedAt).getTime() - new Date(startAt).getTime()) / 1000) : 0,
@@ -514,10 +813,14 @@ export async function snapshot(opts: { host: boolean; playerId?: string | null }
       gameId: 'current',
       score: viewer.score,
       previousScore: viewer.score,
-      hasSubmitted: Boolean(own),
+      // Emoji: a wrong guess doesn't lock you out — only solving does.
+      // Emoji/drawing: a wrong guess doesn't lock you out — only solving does.
+      hasSubmitted: question.kind === 'emoji' || question.kind === 'drawing' ? Boolean(own?.correct) : Boolean(own),
       answer: own?.text,
       earnedPoints: own?.awardedPoints ?? 0,
       recallCorrect: revealed ? own?.matchedCount ?? 0 : undefined,
+      rank: own?.rank,
+      attempts: own?.attempts ?? 0,
       isCorrect: revealed ? own?.correct ?? false : undefined,
     }
   }

@@ -4,7 +4,8 @@ import type { Question, DrawingStroke } from '../../types/game'
 import { DrawingCanvas } from './DrawingCanvas'
 import { useCountdown } from '../../hooks/useCountdown'
 import { WordRecallInput } from './WordRecallInput'
-interface Props { question: Question; selected: string; onSelect: (answer: string) => void; disabled?: boolean; reveal?: boolean; host?: boolean; teamNames?: Record<string, string>; clockOffset?: number; onStroke?: (stroke: DrawingStroke) => Promise<void> }
+import { BlankFillInput } from './BlankFillInput'
+interface Props { question: Question; selected: string; onSelect: (answer: string) => void; onSubmit?: () => void; onClear?: () => Promise<void>; disabled?: boolean; reveal?: boolean; host?: boolean; teamNames?: Record<string, string>; clockOffset?: number; onStroke?: (stroke: DrawingStroke) => Promise<void> }
 export function MCQGame({ question, selected, onSelect, disabled, reveal }: Props) {
   return <div className="answer-options" role="radiogroup" aria-label="Answer choices">
     {question.options.map((answer, index) => {
@@ -29,10 +30,12 @@ export function GameRenderer(props: Props) {
     {q.gameType === 'drawing' && <>
       {cardVisible && <div className="secret-card"><span>{host ? 'HOST ONLY · SECRET CARD' : 'YOUR SECRET CARD'}</span><strong>{data.secretCard}</strong><p>No speaking, actual word, letters, numbers, mouthing or spelling gestures. Do not show the secret card.</p></div>}
       {prep && !data.secretCard && <p className="prepare-note">Your artist is viewing the secret card. Guessing opens after preparation.</p>}
-      {host ? Object.entries(data.canvases ?? {}).map(([teamId, strokes]) => <div key={teamId}><p>{props.teamNames?.[teamId] ?? 'Team'} · live canvas</p><DrawingCanvas strokes={strokes}/></div>) : <DrawingCanvas strokes={data.strokes ?? []} canDraw={Boolean(data.isArtist && !prep && !disabled)} onStroke={onStroke}/>}
-      {data.isArtist && !prep && <p className="prepare-note">You’re the artist. Your teammates submit the guesses.</p>}
+      {!host && !data.isArtist && data.artistName && <p className="artist-banner">🎨 <strong>{data.artistName}</strong> is drawing for your team{data.letters ? ` · ${data.letters} letters` : ''}</p>}
+      {host ? <div className="host-canvases">{Object.keys(data.artistNames ?? data.canvases ?? {}).map(teamId => <div key={teamId}><p>{props.teamNames?.[teamId] ?? 'Team'}{data.artistNames?.[teamId] ? ` · 🎨 ${data.artistNames[teamId]}` : ''}</p><DrawingCanvas strokes={data.canvases?.[teamId] ?? []}/></div>)}</div> : <DrawingCanvas strokes={data.strokes ?? []} canDraw={Boolean(data.isArtist && !prep && !disabled)} onStroke={onStroke} onClear={data.isArtist ? props.onClear : undefined}/>}
+      {data.isArtist && !prep && <p className="prepare-note">You’re the artist! Draw the word — no letters or numbers. Your teammates guess in the chat.</p>}
     </>}
-    {!prep && !host && !data.isArtist && (q.questionType === 'words' ? <WordRecallInput slots={data.slots ?? 25} value={selected} onChange={onSelect} disabled={disabled}/> : q.questionType === 'mcq' ? <MCQGame {...props}/> : <label className="answer-input-label">{q.questionType === 'expression' ? 'Your expression' : q.questionType === 'output' ? 'Code / output answer' : 'Your answer'}<textarea className={`answer-input ${q.questionType === 'output' ? 'code-answer' : ''}`} value={selected} onChange={e => onSelect(e.target.value)} disabled={disabled} maxLength={q.questionType === 'expression' ? 200 : 4000} rows={q.questionType === 'output' ? 4 : 2} autoComplete="off" spellCheck={q.questionType !== 'output'}/></label>)}
+    {q.questionType === 'fill' && host && data.pattern && <div className="blank-fill"><div className="blank-fill-words">{data.pattern.map((word, w) => <div className="blank-fill-word" key={w}>{word.map((c, i) => <span key={i} className={`blank-tile ${c ? 'hint' : ''}`}>{c ?? ''}</span>)}</div>)}</div></div>}
+    {!prep && !host && !data.isArtist && q.questionType !== 'chat' && (q.questionType === 'fill' ? <BlankFillInput pattern={data.pattern ?? []} value={selected} onChange={onSelect} onSubmit={props.onSubmit} disabled={disabled}/> : q.questionType === 'words' ? <WordRecallInput slots={data.slots ?? 25} value={selected} onChange={onSelect} disabled={disabled}/> : q.questionType === 'mcq' ? <MCQGame {...props}/> : <label className="answer-input-label">{q.questionType === 'expression' ? 'Your expression' : q.questionType === 'output' ? 'Code / output answer' : 'Your answer'}<textarea className={`answer-input ${q.questionType === 'output' ? 'code-answer' : ''}`} value={selected} onChange={e => onSelect(e.target.value)} disabled={disabled} maxLength={q.questionType === 'expression' ? 200 : 4000} rows={q.questionType === 'output' ? 4 : 2} autoComplete="off" spellCheck={q.questionType !== 'output'}/></label>)}
     {!prep && host && q.questionType === 'mcq' && <MCQGame {...props} disabled/>}
   </div>
 }
