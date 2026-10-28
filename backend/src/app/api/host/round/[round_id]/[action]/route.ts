@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ round_id: string; action: string }> }) {
   return handle(async () => {
-    requireHost(req)
+    await requireHost(req)
     const { action } = await ctx.params
     // 'start' opens the round introduction; 'complete' moves on.
     if (action === 'start') await startRound()

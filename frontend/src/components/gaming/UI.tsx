@@ -1,0 +1,12 @@
+import type { ReactNode } from 'react'
+import { Link } from 'react-router-dom'
+import { ArrowRight, Trophy, X } from 'lucide-react'
+export const art=(name:string)=>`/design-assets/${name}.png`
+export const rounds=[{name:'Memory Grid',image:'memory',kind:'memory',description:'Look. Remember. Recall.'},{name:'Emoji Decode',image:'emoji',kind:'emoji',description:'Small clues. Big ideas.'},{name:'Draw & Guess',image:'drawing',kind:'drawing',description:'Think outside the canvas.'},{name:'Technical Showdown',image:'technical',kind:'mcq',description:'Bring your clever side.'}] as const
+export function teamArt(name:string){return name==='Titans'?'knight':name==='Ctrl Alt Defeat'?'controller':'cloud'}
+export function teamColor(name:string){return name==='Titans'?'blue':name==='Ctrl Alt Defeat'?'coral':'green'}
+export function Avatar({name,color='',small=true,character}:{name:string;color?:string;small?:boolean;character?:string}){return <span className={`avatar ${small?'small':''} ${color} ${character?'character-avatar':''}`} aria-hidden="true">{character?<img src={art(character)} alt=""/>:name.trim().split(/\s+/).map(n=>n[0]).slice(0,2).join('').toUpperCase()}</span>}
+export function GLink({children,to,primary=false}:{children:ReactNode;to:string;primary?:boolean}){return <Link className={`btn ${primary?'primary':''}`} to={to}>{children}<ArrowRight size={16}/></Link>}
+export function Notice({message}:{message:string}){return <p className="gaming-notice" role="alert">{message}</p>}
+export function Empty({title,children}:{title:string;children:ReactNode}){return <div className="empty-state"><Trophy size={30}/><h2>{title}</h2><p>{children}</p></div>}
+export function Modal({title,onClose,children}:{title:string;onClose:()=>void;children:ReactNode}){return <div className="modal-backdrop" onClick={onClose}><section role="dialog" aria-modal="true" aria-label={title} className="gaming-modal" onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==='Escape')onClose();if(e.key==='Tab'){const items=[...e.currentTarget.querySelectorAll<HTMLElement>('button:not([disabled]),input,select,a[href],textarea')];const first=items[0],last=items[items.length-1];if(e.shiftKey&&document.activeElement===first){e.preventDefault();last?.focus()}else if(!e.shiftKey&&document.activeElement===last){e.preventDefault();first?.focus()}}}}><header className="dialog-head"><h2>{title}</h2><button autoFocus aria-label="Close dialog" onClick={onClose}><X size={20}/></button></header>{children}</section></div>}

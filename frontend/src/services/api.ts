@@ -1,3 +1,4 @@
+import { getSession, logout } from './session'
 const messages: Record<string, string> = {
   NO_ACTIVE_GAME: 'The host hasn’t opened a game yet. Check back in a moment.',
   EMPLOYEE_NOT_FOUND: 'We couldn’t find that user ID. Enter the ID your host gave you.',
@@ -31,10 +32,16 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
   try {
     const response = STATIC
       ? await (await import('./mock/router')).handleMockRequest(path, options)
-      : await fetch(`${API_URL}${path}`, { ...options, credentials: 'include', signal: controller.signal, headers: { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...(path.startsWith('/api/host/') ? await hostAuthHeader() : {}), ...options.headers } })
+      : await fetch(`${API_URL}${path}`, { ...options, credentials: 'include', signal: controller.signal, headers: { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }), ...await hostAuthHeader(), ...options.headers } })
     const body = await response.json().catch(() => null)
     if (!response.ok || body?.success === false) {
-      throw new ApiError(body?.error?.code || body?.detail?.code || (response.status === 404 ? 'ENDPOINT_UNAVAILABLE' : 'SERVER_ERROR'), body?.error?.message || (response.status === 422 ? 'Some fields are invalid. Check the question content and try again.' : undefined))
+      if (response.status === 401 && path !== '/api/session') { logout(); window.location.assign('/login') }
+      // Prefer the structured error code from the body. Only fall back to
+      // ENDPOINT_UNAVAILABLE when the 404 has no body code (i.e. the route
+      // itself doesn't exist), so domain errors like EMPLOYEE_NOT_FOUND still
+      // surface correctly even when they arrive on a 404 status.
+      const errorCode = body?.error?.code || body?.detail?.code || (response.status === 404 ? 'ENDPOINT_UNAVAILABLE' : 'SERVER_ERROR')
+      throw new ApiError(errorCode, body?.error?.message || (response.status === 422 ? 'Some fields are invalid. Check the question content and try again.' : undefined))
     }
     return (body?.data ?? body) as T
   } catch (error) {
@@ -42,14 +49,13 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     throw new ApiError('NETWORK_ERROR')
   } finally { window.clearTimeout(timeout) }
 }
-// Host auth uses a shared password the host enters at /control. We send it as a
-// Bearer token to the backend's requireHost check and keep it in localStorage.
+// User sessions authorize hosting. Legacy password helpers remain for existing tools.
 const HOST_PASSWORD_KEY = 'jumble.host-password'
 export function setHostPassword(password: string) { localStorage.setItem(HOST_PASSWORD_KEY, password) }
 export function getHostPassword(): string { return localStorage.getItem(HOST_PASSWORD_KEY) || '' }
 export function clearHostPassword() { localStorage.removeItem(HOST_PASSWORD_KEY) }
 async function hostAuthHeader(): Promise<Record<string, string>> {
-  const password = getHostPassword()
+  const password = getSession()?.token || getHostPassword()
   return password ? { Authorization: `Bearer ${password}` } : {}
 }
 export const post = <T>(path: string, body: unknown = {}) => request<T>(path, { method: 'POST', body: JSON.stringify(body) })

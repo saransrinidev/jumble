@@ -18,8 +18,9 @@ const now = () => Date.now() / 1000
 const iso = (s: number) => new Date(s * 1000).toISOString()
 const uuid = () => (crypto?.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(36).slice(2))
 
-interface Player { id: string; name: string; team_id: string; isBot: boolean }
+interface Player { id: string; name: string; team_id: string; isBot: boolean; joined?:boolean }
 interface Store {
+  host?: { id: string; name: string }
   gameId: string
   status: 'lobby' | 'playing' | 'paused' | 'completed'
   title: string
@@ -49,6 +50,12 @@ let store: Store | null = load()
 
 function persist() {
   try {
+    if (store?.status === 'completed' && store.endedReason!=='closed') {
+      const existing=resultHistory().find((r:AnyObj)=>r._id===store!.gameId)
+      const result=existing||{_id:store.gameId,title:store.title,completedAt:new Date().toISOString(),players:store.players.length,host:store.host,totalRounds:store.content.rounds.length,teams:TEAM_DEFS.map(t=>({id:t.id,name:t.name,score:store!.runtime?.scores?.[t.id]||0}))}
+      localStorage.setItem('jumble.mock.last-result',JSON.stringify(result))
+      localStorage.setItem('jumble.mock.results',JSON.stringify([result,...resultHistory().filter((r:AnyObj)=>r._id!==result._id)].slice(0,100)))
+    }
     if (store) localStorage.setItem(KEY, JSON.stringify(store))
     else localStorage.removeItem(KEY)
   } catch {
@@ -68,6 +75,7 @@ function buildQuestions(content: AnyObj): AnyObj[] {
       questions.push({
         ...q,
         kind: r.gameType,
+        roundName:r.name,
         round: i,
         number: q.isDemo ? 0 : r.questions.slice(0, j + 1).filter((p: AnyObj) => !p.isDemo).length,
         scoredCount: r.questions.filter((v: AnyObj) => !v.isDemo).length,
@@ -118,6 +126,7 @@ export function joinHuman(name: string): AnyObj {
   } else {
     human.name = name.trim() || human.name
   }
+  human.joined=true
   persist()
   return {
     player: { id: human.id, name: human.name },
@@ -225,15 +234,33 @@ export function hostAction(action: string): AnyObj {
   return { ok: true }
 }
 
-export function createGame(): AnyObj {
+export function createGame(host?: { id: string; name: string }, title?: string, content?: AnyObj): AnyObj {
   // Replace any active session with a fresh lobby (bots reseeded).
   store = null
   const s = ensureGame()
+  s.host = host
+  if (title) s.title = title
+  if (content) s.content = content
+  persist()
   return { id: s.gameId, title: s.title, status: s.status }
 }
 
+export function dashboard(userId: string): AnyObj {
+  store = load()
+  let last = null
+  try { last = JSON.parse(localStorage.getItem('jumble.mock.last-result') || 'null') } catch { /* empty result */ }
+  return { active: store && store.status !== 'completed' ? { ...activeGame(), host: store.host || null,players:store.players.filter(p=>p.joined!==false).length,rounds:store.content.rounds.map((r:AnyObj)=>r.name||r.gameType) } : null, isHost: Boolean(store?.host?.id === userId), last }
+}
+export function resultHistory():AnyObj[]{try{return JSON.parse(localStorage.getItem('jumble.mock.results')||'[]')}catch{return []}}
+export function closeLobby(){if(store){store.status='completed';store.endedReason='closed';if(store.runtime)store.runtime.phase='completed';persist()}return {closed:true}}
+export function leaveHuman(){if(store){const human=store.players.find(p=>p.id===store!.humanId);if(human)human.joined=false;persist()}return {left:true}}
+export function hostPlayers(){return (store?.players||[]).map(p=>({id:p.id,name:p.name,teamId:p.team_id,score:store?.runtime?.contributions?.[p.id]||0,joined:p.joined!==false}))}
+export function addHostPlayer(id:string,name:string,teamId:string){if(!store)throw mockError('NO_ACTIVE_GAME','Open a game first.',404);if(!id||!TEAM_DEFS.some(t=>t.id===teamId))throw mockError('CONTENT_INVALID','Enter a user ID and a valid team.');const player=store.players.find(p=>p.id===id);if(player){player.name=name||id;player.team_id=teamId}else store.players.push({id,name:name||id,team_id:teamId,isBot:true,joined:true});persist();return hostPlayers().find(p=>p.id===id)}
+export function removeHostPlayer(id:string){if(store){store.players=store.players.filter(p=>p.id!==id);persist()}return {removed:true}}
+
 export function replay(): AnyObj {
-  return createGame()
+  const previous = store
+  return createGame(previous?.host, previous?.title, previous?.content)
 }
 
 export function submit(playerId: string, questionId: string, answer: string, requestId: string): AnyObj {
@@ -302,7 +329,7 @@ function mockError(code: string, message: string, status = 400) {
 function rosterTeams(withMembers: boolean): AnyObj[] {
   const s = store!
   return TEAM_DEFS.map((team) => {
-    const members = s.players.filter((p) => p.team_id === team.id)
+    const members = s.players.filter((p) => p.team_id === team.id && p.joined!==false)
     const item: AnyObj = {
       id: team.id,
       name: team.name,
@@ -318,7 +345,7 @@ function rosterTeams(withMembers: boolean): AnyObj[] {
 
 function participants(viewerId: string | null): AnyObj[] {
   const s = store!
-  return s.players.map((p) => ({ id: p.id, name: p.name, teamId: p.team_id, isYou: p.id === viewerId }))
+  return s.players.filter(p=>p.joined!==false).map((p) => ({ id: p.id, name: p.name, teamId: p.team_id, isYou: p.id === viewerId }))
 }
 
 function questionView(rt: AnyObj, host: boolean): AnyObj {
@@ -377,15 +404,17 @@ function questionView(rt: AnyObj, host: boolean): AnyObj {
 export function gameSnapshot(host: boolean, playerId: string | null = null): AnyObj {
   const s = store
   if (!s) throw mockError('NO_ACTIVE_GAME', 'There is no active game.', 404)
+  simulateBots()
   autoExpire()
   const viewer = playerId ? s.players.find((p) => p.id === playerId) : null
   const result: AnyObj = {
     id: s.gameId,
     title: s.title,
+    totalRounds: s.content.rounds.length,
     status: s.status,
     current_round: s.runtime?.questions?.[s.runtime.index]?.round ?? 0,
     teams: rosterTeams(host || Boolean(viewer)),
-    joined: s.players.length,
+    joined: s.players.filter(p=>p.joined!==false).length,
     total: s.players.length,
     participants: host || viewer ? participants(playerId) : [],
     endedReason: s.endedReason,
@@ -399,7 +428,7 @@ export function gameSnapshot(host: boolean, playerId: string | null = null): Any
     result.phase = rt.phase
     result.round = q.round + 1
     result.roundId = String(q.round + 1)
-    result.roundName = ROUND_NAMES[q.round]
+    result.roundName = q.roundName || ({ memory: 'Memory Grid', emoji: 'Emoji Decode', drawing: 'Draw & Guess', technical: 'Technical Showdown',text:'Custom quiz' } as Record<string, string>)[q.kind] || ROUND_NAMES[q.round]
     result.roundDescription = '30 seconds to answer. Every team counts.'
     result.question = questionView(rt, host)
     result.serverTime = iso(now())

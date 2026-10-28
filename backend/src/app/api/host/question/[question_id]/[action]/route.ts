@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ question_id: string; action: string }> }) {
   return handle(async () => {
-    requireHost(req)
+    await requireHost(req)
     const { action } = await ctx.params
     // start -> open the question; end/reveal-answer/reveal-score -> close + auto-score.
     if (action === 'start') await startQuestion()

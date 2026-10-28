@@ -9,7 +9,7 @@ export const dynamic = 'force-dynamic'
 /** Host marks a player's answer correct or incorrect. Body: { correct: boolean } */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ submission_id: string }> }) {
   return handle(async () => {
-    requireHost(req)
+    await requireHost(req)
     const { submission_id } = await ctx.params
     const body = await jsonBody<{ correct?: boolean }>(req)
     await reviewAnswer(decodeURIComponent(submission_id), Boolean(body.correct))
