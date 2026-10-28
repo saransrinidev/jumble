@@ -1,6 +1,8 @@
 // Routes the frontend's /api/* calls to the in-browser engine and returns the
 // same { success, data, error } envelope the real backend produced.
 import * as engine from './engine'
+import { getSession } from '../session'
+import { userLibrary, saveTemplate, hostGame } from './dashboard'
 
 type Envelope = { success: boolean; data: unknown; error: { code: string; message: string } | null }
 
@@ -45,6 +47,23 @@ export async function handleMockRequest(path: string, options: RequestInit = {})
   const method = (options.method ?? 'GET').toUpperCase()
 
   try {
+    if (p === '/api/session' && method === 'POST') {
+      const body = await parseBody(options), id = String(body.identifier || '').trim().toUpperCase()
+      if (!id) return fail('EMPLOYEE_NOT_FOUND', 'Enter a user ID.', 404)
+      return ok({ token: crypto.randomUUID(), user: { id, name: id } })
+    }
+    if (p === '/api/dashboard' || p === '/api/history' || p === '/api/templates' || p.startsWith('/api/host/')) {
+      const session = getSession()
+      if (!session) return fail('UNAUTHORIZED', 'Please log in.', 401)
+      const dashboard = engine.dashboard(session.user.id)
+      if(p==='/api/history') return ok(engine.resultHistory())
+      if (p === '/api/dashboard' || p === '/api/host/access') return ok(dashboard)
+      if (p === '/api/templates') {
+        return ok(method === 'POST' ? saveTemplate(await parseBody(options)) : userLibrary())
+      }
+      if (p === '/api/host/game/create' && method === 'POST') return ok(hostGame(await parseBody(options)))
+      if (!dashboard.isHost) return fail('UNAUTHORIZED_HOST', 'Only the current host can control this game.', 403)
+    }
     // --- Host authorization probe (no Supabase in static mode) ---
     if (p === '/api/host/access') return ok({ role: 'host' })
 
@@ -79,6 +98,13 @@ export async function handleMockRequest(path: string, options: RequestInit = {})
     }
 
     // --- Host live/lobby/status ---
+    if(p==='/api/host/game/close'&&method==='POST')return ok(engine.closeLobby())
+    if(p==='/api/host/players'){
+      if(method==='GET')return ok(engine.hostPlayers())
+      if(method==='DELETE')return ok(engine.removeHostPlayer(getParam(url,'user_id')))
+      if(method==='POST'){const body=await parseBody(options);return ok(engine.addHostPlayer(String(body.userId||''),String(body.name||''),String(body.teamId||'')))}
+    }
+    if(p==='/api/player/leave'&&method==='POST')return ok(engine.leaveHuman())
     if (p === '/api/host/live' && method === 'GET') return ok(engine.gameSnapshot(true, null))
     if ((p === '/api/host/lobby' || p === '/api/host/status') && method === 'GET') {
       return ok(engine.gameSnapshot(true, null))
@@ -129,6 +155,7 @@ export async function handleMockRequest(path: string, options: RequestInit = {})
     return fail('ENDPOINT_UNAVAILABLE', 'This action is not available in the static demo.', 404)
   } catch (e) {
     if (isMockError(e)) return fail(e.code, e.message, e.status)
+    if (e instanceof Error) return fail('CONTENT_INVALID', e.message, 422)
     return fail('INTERNAL_ERROR', 'The demo engine hit an unexpected error.', 500)
   }
 }

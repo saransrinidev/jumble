@@ -93,10 +93,9 @@ export function AwardPanel() {
     {TEAMS.map(team => <div key={team.id} className="award-team">
       <strong>{team.name}</strong>
       {players.filter(p => p.teamId === team.id).map(p => <div key={p.id} className="award-row">
-        <span className="host-admin-name">{p.name}</span>
-        <span className="host-admin-id">{p.id}</span>
-        <span className="award-score">{p.score}</span>
-        <span className="award-buttons">
+        <span className="award-identity"><span className="host-admin-name">{p.name}</span><span className="host-admin-id">{p.id}</span></span>
+        <span className="award-score" aria-label={`${p.score} points`}>{p.score}</span>
+        <span className="award-buttons" role="group" aria-label={`Adjust points for ${p.name}`}>
           <button className="button secondary" disabled={busy === p.id} onClick={() => void award(p.id, -5)}>-5</button>
           <button className="button secondary" disabled={busy === p.id} onClick={() => void award(p.id, 5)}>+5</button>
           <button className="button primary" disabled={busy === p.id} onClick={() => void award(p.id, 10)}>+10</button>

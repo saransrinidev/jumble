@@ -86,6 +86,7 @@ export interface ChatDoc {
 }
 
 export interface RoundDoc {
+  kind?: QuestionKind
   _id: string // '1'..'6'
   index: number
   name: string
@@ -94,6 +95,9 @@ export interface RoundDoc {
 }
 
 export interface GameDoc {
+  sessionId?: string
+  title?: string
+  host?: { id: string; name: string }
   _id: 'current' // single active game document
   status: GameStatus
   phase: Phase
@@ -102,6 +106,7 @@ export interface GameDoc {
   rounds: RoundDoc[]
   startedAt?: Date
   completedAt?: Date
+  closedAt?: Date
   // Timing of the active question
   questionStartedAt?: Date // memory: grid shown from here
   answerStartsAt?: Date // memory: grid hides + typing opens here

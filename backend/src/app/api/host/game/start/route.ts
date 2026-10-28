@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    requireHost(req)
+    await requireHost(req)
     await startGame()
     return ok({ started: true })
   })

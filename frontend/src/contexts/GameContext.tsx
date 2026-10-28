@@ -12,7 +12,7 @@ import { subscribeToGame } from '../services/realtimeService'
 import { subscribeLive } from '../services/liveService'
 import { DEMO, STATIC } from '../services/api'
 import type { Connection } from '../services/realtimeService'
-interface Context { state: GameState; loading: boolean; error: string; connection: Connection; clockOffset: number; refresh: () => Promise<void>; join: (name: string, code?: string) => Promise<JoinResponse>; submit: (answer: string) => Promise<SubmitResult | undefined>; hostAction: (action: HostAction) => Promise<void>; clearError: () => void }
+interface Context { state: GameState; loading: boolean; error: string; connection: Connection; clockOffset: number; refresh: () => Promise<void>; join: (name: string, code?: string) => Promise<JoinResponse>; submit: (answer: string) => Promise<SubmitResult | undefined>; hostAction: (action: HostAction) => Promise<void>; clearError: () => void; leave: () => void }
 export interface SubmitResult { answerLocked: boolean; correct?: boolean; rank?: number; points?: number }
 export type HostAction = 'create' | 'start' | 'round' | 'question' | 'end' | 'answer' | 'scores' | 'next' | 'complete' | 'finish' | 'replay'
 const GameContext = createContext<Context | null>(null)
@@ -85,7 +85,7 @@ export function GameProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(timer)
   }, [state.id, state.phase, state.player?.waitingForGame, refresh])
   useEffect(() => {
-    if (!state.id) { setConnection('unavailable'); return }
+    if (!state.id || (!host && !state.player)) { setConnection('unavailable'); return }
     let active = true
     let scheduled: ReturnType<typeof setTimeout> | undefined
     const unsubscribe = (STATIC || !DEMO) ? subscribeLive(state.id, state.player?.id, host, raw => {
@@ -160,6 +160,6 @@ export function GameProvider({ children }: { children: ReactNode }) {
       await refresh(true)
     } finally { actionPending.current = false }
   }
-  return <GameContext.Provider value={{ state, loading, error, connection, clockOffset, refresh, join, submit, hostAction, clearError: () => setError('') }}>{children}</GameContext.Provider>
+  return <GameContext.Provider value={{ state, loading, error, connection, clockOffset, refresh, join, submit, hostAction, clearError: () => setError(''), leave: () => { ++epoch.current; localStorage.removeItem(sessionKey); localStorage.removeItem('jumble.game'); const next = emptyGame(); current.current = next; setState(next) } }}>{children}</GameContext.Provider>
 }
 export function useGame() { const value = useContext(GameContext); if (!value) throw new Error('GameProvider is missing'); return value }

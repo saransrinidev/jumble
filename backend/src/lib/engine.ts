@@ -96,15 +96,20 @@ function findQuestion(game: GameDoc, questionId: string) {
 }
 
 /** Create a fresh game (lobby): resets scores, answers and presence; keeps the roster. */
-export async function createGame(): Promise<GameDoc> {
+export async function createGame(options?: { host: { id: string; name: string }; title?: string; rounds?: RoundDoc[] }): Promise<GameDoc> {
+  const previous = await (await gameCol()).findOne({ _id: 'current' })
+  if (previous?.status === 'completed') await (await import('./dashboard')).saveResult(previous)
   await ensureTeams()
   const game: GameDoc = {
     _id: 'current',
+    sessionId: randomUUID(),
+    host: options?.host,
+    title: options?.title || 'Jumble',
     status: 'lobby',
     phase: 'lobby',
     roundIndex: 0,
     questionIndex: 0,
-    rounds: defaultRounds(),
+    rounds: options?.rounds || defaultRounds(),
     scoredQuestions: [],
     solvers: {},
     contentVersion: CONTENT_VERSION,
@@ -329,6 +334,8 @@ export async function finishGame(): Promise<void> {
     { _id: 'current' },
     { $set: { phase: 'completed', status: 'completed', completedAt: new Date() } },
   )
+  const completed = await (await gameCol()).findOne({ _id: 'current' })
+  if (completed) await (await import('./dashboard')).saveResult(completed)
 }
 
 /** Host: edit a (text) question's prompt / accepted answers / points / time. */
@@ -709,9 +716,10 @@ export async function snapshot(opts: { host: boolean; playerId?: string | null }
 
   const result: Record<string, unknown> = {
     id: 'current',
-    title: 'Jumble',
+    title: game.title || 'Jumble',
     status: game.status,
     phase: game.phase,
+    endedReason:game.closedAt?'closed':undefined,
     round: game.roundIndex + 1,
     totalRounds: game.rounds.length,
     roundId: round._id,

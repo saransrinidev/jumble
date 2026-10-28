@@ -13,7 +13,7 @@ export const dynamic = 'force-dynamic'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    requireHost(req)
+    await requireHost(req)
     const body = await jsonBody<{ playerId?: string; points?: number; score?: number }>(req)
     if (!body.playerId) throw new AppError('CONTENT_INVALID', 'playerId is required.')
     if (typeof body.score === 'number') await setScore(body.playerId, body.score)

@@ -11,7 +11,7 @@ export const dynamic = 'force-dynamic'
  */
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    requireHost(req)
+    await requireHost(req)
     const body = await jsonBody<{
       questionId?: string
       roundId?: string

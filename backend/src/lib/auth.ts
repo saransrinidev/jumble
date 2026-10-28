@@ -1,13 +1,14 @@
 /**
- * Host authorization via a shared password (no external auth provider).
- * The frontend sends it as an `Authorization: Bearer <password>` header or an
- * `x-host-password` header. Verified against HOST_PASSWORD with a constant-time
- * comparison.
+ * The current game's owner controls hosting through a verified user session.
+ * Existing operational tools may still use the configured host password.
  */
 import crypto from 'node:crypto'
 import type { NextRequest } from 'next/server'
 import { settings } from './config'
 import { AppError } from './envelope'
+import { requireUser } from './dashboard'
+import { collection } from './mongo'
+import type { GameDoc } from './types'
 
 function constantTimeEqual(a: string, b: string): boolean {
   const ba = Buffer.from(a)
@@ -25,12 +26,11 @@ export function hostPasswordFrom(req: NextRequest): string | null {
   return req.headers.get('x-host-password')
 }
 
-export function requireHost(req: NextRequest): void {
-  if (!settings.HOST_PASSWORD) {
-    throw new AppError('UNAUTHORIZED_HOST', 'Host password is not configured on the server.', 403)
-  }
+export async function requireHost(req: NextRequest): Promise<void> {
   const provided = hostPasswordFrom(req)
-  if (!provided || !constantTimeEqual(provided, settings.HOST_PASSWORD)) {
-    throw new AppError('UNAUTHORIZED_HOST', 'Host authorization failed.', 403)
-  }
+  if (provided && settings.HOST_PASSWORD && constantTimeEqual(provided, settings.HOST_PASSWORD)) return
+  const user = await requireUser(req)
+  const game = await (await collection<GameDoc>('game')).findOne({ _id: 'current' })
+  if (game?.host?.id === user.id) return
+  throw new AppError('UNAUTHORIZED_HOST', 'Only the current host can control this game.', 403)
 }

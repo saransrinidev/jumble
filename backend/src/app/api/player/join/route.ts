@@ -1,15 +1,14 @@
 import type { NextRequest } from 'next/server'
 import { ok, handle } from '@/lib/envelope'
 import { joinByUserId, teamDisplayName } from '@/lib/engine'
-import { jsonBody } from '@/lib/http'
+import { requireUser } from '@/lib/dashboard'
 
 export const dynamic = 'force-dynamic'
 
 export async function POST(req: NextRequest) {
   return handle(async () => {
-    const body = await jsonBody<{ name?: string; identifier?: string; employeeCode?: string }>(req)
-    // The join form sends the user ID in `name` (or employeeCode).
-    const userId = (body.employeeCode || body.identifier || body.name || '').toString()
+    // Joining always uses the logged-in identity, never a client-supplied ID.
+    const userId = (await requireUser(req)).id
     const { player, game } = await joinByUserId(userId)
     return ok({
       player: { id: player._id, name: player.name },

@@ -10,6 +10,10 @@
     "typecheck": "tsc -b",
     "preview": "vite preview --host 0.0.0.0",
     "test": "vitest run",
+    "test:dashboard": "node scripts/gaming-frontend-check.cjs",
+    "test:gaming-ui": "node scripts/gaming-frontend-check.cjs",
+    "test:profile": "node scripts/profile-character-check.cjs",
+    "test:builder-shortcuts": "node scripts/builder-shortcuts-check.cjs",
     "test:browser": "node scripts/browser-check.cjs",
     "test:gameplay": "node scripts/gameplay-browser-check.cjs",
     "test:splash": "node scripts/splash-browser-check.cjs",
@@ -26,6 +30,7 @@
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-router-dom": "^7.9.1",
+    "read-excel-file": "^9.3.12",
     "tailwindcss": "^4.1.13"
   },
   "devDependencies": {

@@ -7,7 +7,7 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   return handle(async () => {
-    requireHost(req)
+    await requireHost(req)
     await autoExpire()
     return ok(await snapshot({ host: true, playerId: null }))
   })

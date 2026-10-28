@@ -19,7 +19,7 @@ export function GameRenderer(props: Props) {
   const data = q.questionData ?? {}, prep = q.subphase === 'prepare'
   const cardRemaining = useCountdown(data.cardExpiresAt, 0, props.clockOffset ?? 0)
   const cardVisible = data.secretCard && (!data.cardExpiresAt || (cardRemaining !== null && cardRemaining > 0))
-  const supported = ['memory', 'emoji', 'connection', 'target', 'drawing', 'technical', 'mcq'].includes(q.gameType)
+  const supported = ['memory', 'emoji', 'connection', 'target', 'drawing', 'technical', 'mcq', 'text'].includes(q.gameType)
   if (!supported) return <div className="unsupported"><Puzzle size={38}/><h3>Unsupported challenge</h3><p>Ask your host to check the content.</p></div>
   return <div className="round-interaction">
     {q.gameType === 'memory' && prep && (data.image ? <img className="bank-visual" src={data.image} alt="Workplace visual to memorize"/> : <div className={`memory-grid ${q.questionType === 'words' ? 'word-grid' : ''}`} style={{ gridTemplateColumns: `repeat(${data.cols ?? 3}, minmax(0, 1fr))` }}>{data.cells?.map((cell, i) => <div key={i}>{/^https?:\/\//.test(cell) ? <img src={cell} alt={`Grid image ${i + 1}`}/> : <span>{cell}</span>}</div>)}</div>)}

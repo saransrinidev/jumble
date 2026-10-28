@@ -1,4 +1,5 @@
 import { API_URL, STATIC, getHostPassword, query } from './api'
+import { getSession } from './session'
 import type { Connection } from './realtimeService'
 
 // Live gameplay snapshots are delivered by polling the backend's live endpoints.
@@ -27,7 +28,7 @@ export function subscribeLive(
       announcedConnecting = true
     }
     try {
-      const password = host && !STATIC ? getHostPassword() : ''
+      const password = !STATIC ? getSession()?.token || (host ? getHostPassword() : '') : ''
       if (stopped) return
       if (host && !STATIC && !password) {
         onStatus('unavailable')
